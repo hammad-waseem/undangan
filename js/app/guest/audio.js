@@ -1,9 +1,18 @@
 import { progress } from "./progress.js";
+import { util } from "../../common/util.js";
+import { request, HTTP_GET } from "../../connection/request.js";
 
 export const audio = (() => {
   let music = null;
   let audioEl = null;
+  let url = null;
+  let canPlay = null;
   let isPlay = false;
+
+  let ttl = 1000 * 60 * 60 * 6; // 6 hours cache
+  const cacheName = "audio";
+  const type = "audio/mpeg";
+  const exp = "x-expiration-time";
 
   const statePlay = '<i class="fa-solid fa-circle-pause spin-button"></i>';
   const statePause = '<i class="fa-solid fa-circle-play"></i>';
@@ -12,10 +21,11 @@ export const audio = (() => {
    * @returns {Promise<void>}
    */
   const play = async () => {
-    if (!navigator.onLine) return;
+    if (!navigator.onLine || !audioEl) return;
 
     music.disabled = true;
     try {
+      await canPlay;
       await audioEl.play();
       isPlay = true;
       music.innerHTML = statePlay;
@@ -31,9 +41,58 @@ export const audio = (() => {
    * @returns {void}
    */
   const pause = () => {
+    if (!audioEl) return;
     isPlay = false;
     audioEl.pause();
     music.innerHTML = statePause;
+  };
+
+  /**
+   * @param {Cache} c
+   * @returns {Promise<Blob>}
+   */
+  const fetchPut = async (c) => {
+    try {
+      const response = await request(HTTP_GET, url).default();
+      const blob = await response.blob();
+
+      const headers = new Headers();
+      headers.set("Content-Type", type);
+      headers.set("Content-Length", String(blob.size));
+      headers.set(exp, String(Date.now() + ttl));
+
+      await c.put(url, new Response(blob, { headers }));
+      return blob;
+    } catch (err) {
+      console.error("Audio fetch error:", err);
+      throw err;
+    }
+  };
+
+  /**
+   * @returns {Promise<string>}
+   */
+  const getUrl = async () => {
+    const c = await caches.open(cacheName);
+    const cachedRes = await c.match(url);
+
+    if (!cachedRes) return URL.createObjectURL(await fetchPut(c));
+
+    const expiry = parseInt(cachedRes.headers.get(exp), 10);
+    if (Date.now() > expiry) {
+      await c.delete(url);
+      return URL.createObjectURL(await fetchPut(c));
+    }
+
+    return URL.createObjectURL(await cachedRes.blob());
+  };
+
+  /**
+   * @param {number} num
+   * @returns {void}
+   */
+  const setTtl = (num) => {
+    ttl = Number(num);
   };
 
   /**
@@ -43,27 +102,41 @@ export const audio = (() => {
     music = document.getElementById("button-music");
     if (!music) return console.error("Music button not found!");
 
-    let url = music.getAttribute("data-url");
+    url = music.getAttribute("data-url");
     if (!url) return console.error("Audio URL not found!");
 
-    audioEl = new Audio(url);
-    audioEl.loop = true;
-    audioEl.volume = 1;
-    audioEl.muted = false;
-    audioEl.autoplay = false;
-    audioEl.controls = false;
-
-    // Ensure audio is allowed to play on mobile
-    music.addEventListener("click", async () => {
-      if (isPlay) {
-        pause();
-      } else {
-        await play();
-      }
+    document.addEventListener("undangan.open", () => {
+      music.style.display = "block";
     });
 
-    progress.complete("audio");
+    try {
+      audioEl = new Audio(await getUrl());
+      audioEl.volume = 1;
+      audioEl.loop = true;
+      audioEl.muted = false;
+      audioEl.currentTime = 0;
+      audioEl.autoplay = false;
+      audioEl.controls = false;
+
+      canPlay = new Promise((res) => audioEl.addEventListener("canplay", res));
+      progress.complete("audio");
+
+      // Ensure interaction on mobile
+      music.addEventListener("click", async () => {
+        if (isPlay) {
+          pause();
+        } else {
+          await play();
+        }
+      });
+
+      // Pause when offline
+      window.addEventListener("offline", pause);
+    } catch (err) {
+      console.error("Audio initialization error:", err);
+      progress.invalid("audio");
+    }
   };
 
-  return { init, play };
+  return { init, play, pause, setTtl };
 })();
