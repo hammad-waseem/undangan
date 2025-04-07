@@ -3,27 +3,12 @@ import { util } from "../../common/util.js";
 import { request, HTTP_GET } from "../../connection/request.js";
 
 export const image = (() => {
-  /**
-   * @type {Map<string, string>|null}
-   */
   let uniqUrl = null;
-
-  /**
-   * @type {NodeListOf<HTMLImageElement>|null}
-   */
   let images = null;
-
   let hasSrc = false;
-
-  // default 6 hour TTL
-  let ttl = 1000 * 60 * 60 * 6;
-
+  let ttl = 1000 * 60 * 60 * 6; // 6 hour TTL
   const cacheName = "images";
 
-  /**
-   * @param {HTMLImageElement} el
-   * @returns {Promise<void>}
-   */
   const getByFetch = async (el) => {
     const url = el.getAttribute("data-src");
     const exp = "x-expiration-time";
@@ -43,37 +28,22 @@ export const image = (() => {
       return;
     }
 
-    /**
-     * @param {ImageBitmap} i
-     * @returns {Promise<Blob>}
-     */
     const toWebp = (i) =>
       new Promise((res, rej) => {
         const c = document.createElement("canvas");
         c.width = i.width;
         c.height = i.height;
         c.getContext("2d").drawImage(i, 0, 0);
-
-        const callback = (b) => {
-          c.remove();
-
-          if (b) {
-            res(b);
-          } else {
-            rej(new Error("Failed to convert image to WebP"));
-          }
-        };
-
-        c.onerror = rej;
-        c.toBlob(callback, type, 0.8);
+        c.toBlob(
+          (b) => {
+            c.remove();
+            b ? res(b) : rej(new Error("Failed to convert image to WebP"));
+          },
+          type,
+          0.8
+        );
       });
 
-    /**
-     * @param {Cache} c
-     * @param {number} retries
-     * @param {number} delay
-     * @returns {Promise<Blob>}
-     */
     const fetchPut = (c, retries = 3, delay = 1000) =>
       request(HTTP_GET, url)
         .default()
@@ -89,11 +59,8 @@ export const image = (() => {
           return c.put(url, new Response(b, { headers })).then(() => b);
         })
         .catch((err) => {
-          if (retries <= 0) {
-            throw err;
-          }
-
-          console.warn("Retrying fetch:" + url);
+          if (retries <= 0) throw err;
+          console.warn("Retrying fetch:", url);
           return new Promise((res) =>
             util.timeOut(
               () => res(fetchPut(c, retries - 1, delay + 1000)),
@@ -102,37 +69,40 @@ export const image = (() => {
           );
         });
 
-    /**
-     * @param {Cache} c
-     * @returns {Promise<Blob>}
-     */
     const imageCache = (c) =>
       c.match(url).then((res) => {
-        if (!res) {
-          return fetchPut(c);
-        }
-
-        if (Date.now() <= parseInt(res.headers.get(exp))) {
-          return res.blob();
-        }
-
+        if (!res) return fetchPut(c);
+        if (Date.now() <= parseInt(res.headers.get(exp))) return res.blob();
         return c.delete(url).then((s) => (s ? fetchPut(c) : res.blob()));
       });
 
-    await caches
-      .open(cacheName)
-      .then((c) => imageCache(c))
-      .then((b) => {
-        img.src = URL.createObjectURL(b);
-        uniqUrl.set(url, img.src);
-      })
-      .catch(() => progress.invalid("image"));
+    let blob;
+    if (!("caches" in window)) {
+      console.warn("Cache API not supported. Fetching image directly:", url);
+      try {
+        const originalBlob = await request(HTTP_GET, url)
+          .default()
+          .then((r) => r.blob());
+        const imageBitmap = await window.createImageBitmap(originalBlob);
+        blob = await toWebp(imageBitmap);
+      } catch (err) {
+        console.error("Image fetch failed:", err);
+        return progress.invalid("image");
+      }
+    } else {
+      try {
+        const c = await caches.open(cacheName);
+        blob = await imageCache(c);
+      } catch (err) {
+        console.error("Image cache failed:", err);
+        return progress.invalid("image");
+      }
+    }
+
+    img.src = URL.createObjectURL(blob);
+    uniqUrl.set(url, img.src);
   };
 
-  /**
-   * @param {HTMLImageElement} el
-   * @returns {void}
-   */
   const getByDefault = (el) => {
     el.onerror = () => progress.invalid("image");
     el.onload = () => {
@@ -148,22 +118,12 @@ export const image = (() => {
     }
   };
 
-  /**
-   * @returns {boolean}
-   */
   const hasDataSrc = () => hasSrc;
 
-  /**
-   * @param {number} v
-   * @returns {void}
-   */
   const setTtl = (v) => {
     ttl = Number(v);
   };
 
-  /**
-   * @returns {void}
-   */
   const load = () => {
     (async () => {
       for (const el of images) {
@@ -176,9 +136,6 @@ export const image = (() => {
     })();
   };
 
-  /**
-   * @returns {object}
-   */
   const init = () => {
     uniqUrl = new Map();
     images = document.querySelectorAll("img");

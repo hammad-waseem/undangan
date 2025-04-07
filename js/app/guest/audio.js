@@ -73,18 +73,35 @@ export const audio = (() => {
    * @returns {Promise<string>}
    */
   const getUrl = async () => {
-    const c = await caches.open(cacheName);
-    const cachedRes = await c.match(url);
+    let blob;
 
-    if (!cachedRes) return URL.createObjectURL(await fetchPut(c));
+    try {
+      if (typeof caches === "undefined") {
+        console.warn("Cache API not supported. Fetching directly.");
+        return URL.createObjectURL(await fetchPut({ put: async () => {} }));
+      }
 
-    const expiry = parseInt(cachedRes.headers.get(exp), 10);
-    if (Date.now() > expiry) {
-      await c.delete(url);
-      return URL.createObjectURL(await fetchPut(c));
+      const c = await caches.open(cacheName);
+      const cachedRes = await c.match(url);
+
+      if (!cachedRes) {
+        blob = await fetchPut(c);
+      } else {
+        const expiry = parseInt(cachedRes.headers.get(exp), 10);
+        if (Date.now() > expiry) {
+          await c.delete(url);
+          blob = await fetchPut(c);
+        } else {
+          blob = await cachedRes.blob();
+        }
+      }
+
+      return URL.createObjectURL(blob);
+    } catch (err) {
+      console.error("Fallback: could not cache audio. Fetching directly.", err);
+      blob = await fetchPut({ put: async () => {} });
+      return URL.createObjectURL(blob);
     }
-
-    return URL.createObjectURL(await cachedRes.blob());
   };
 
   /**
@@ -133,7 +150,7 @@ export const audio = (() => {
       // Pause when offline
       window.addEventListener("offline", pause);
     } catch (err) {
-      console.error("Audio initialization error:", err);
+      console.error("Audio initialization errorR:", err);
       progress.invalid("audio");
     }
   };

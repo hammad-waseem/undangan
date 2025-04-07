@@ -188,11 +188,11 @@ export const guest = (() => {
       action: "TEMPLATE",
       text: "The Wedding of Hammad and Zunaira",
       dates: `${formatDate("2025-05-26 21:00")}/${formatDate(
-        "2025-05-26 22:00"
+        "2025-05-26 24:00"
       )}`,
       details:
         "With the utmost respect, we invite you to join us in celebrating our wedding. Your presence, prayers, and blessings will be our greatest honor and happiness.",
-      location: "https://goo.gl/maps/ALZR6FJZU3kxVwN86",
+      location: "https://maps.app.goo.gl/kwSW6W7o2NRgYXwK6",
       ctz: "Asia/Karachi",
     };
 
